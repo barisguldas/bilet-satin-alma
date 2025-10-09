@@ -2,35 +2,70 @@
 session_start();
 require_once 'includes/config.php';
 
+// Hata gösterimi (geliştirme için)
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Giriş kontrolü
+if (!isset($_SESSION['user_id'])) {
+    header('Location: login.php');
+    exit;
+}
+
+// Kullanıcı bilgilerini çek
+$stmt = $db->prepare("SELECT * FROM User WHERE id = :id");
+$stmt->execute([':id' => $_SESSION['user_id']]);
+$current_user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$current_user) {
+    die("Kullanıcı bulunamadı.");
+}
+
+// Sadece firma yetkilileri erişebilsin
+if ($current_user['role'] !== 'company') {
+    http_response_code(403);
+    die("<h3 style='color:red; text-align:center;'>Bu sayfaya sadece firma yetkilileri erişebilir.</h3>");
+}
+
+// Kullanıcının bağlı olduğu firmayı çek
+if (empty($current_user['company_id'])) {
+    die("<h3 style='color:red; text-align:center;'>Bu kullanıcıya ait bir firma bulunamadı. Lütfen yöneticinize başvurun.</h3>");
+}
+
+$stmt = $db->prepare("SELECT * FROM Bus_Company WHERE id = :id");
+$stmt->execute([':id' => $current_user['company_id']]);
+$company = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$company) {
+    die("<h3 style='color:red; text-align:center;'>Firma bilgisi bulunamadı.</h3>");
+}
+
+// Sefer ekleme işlemi
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $company_id = $_POST['company_id'];
-    $departure_city = $_POST['departure_city'];
-    $destination_city = $_POST['destination_city'];
+    $departure_city = trim($_POST['departure_city']);
+    $destination_city = trim($_POST['destination_city']);
     $departure_time = $_POST['departure_time'];
     $arrival_time = $_POST['arrival_time'];
     $price = $_POST['price'];
     $capacity = $_POST['capacity'];
 
-    try {
-        $stmt = $db->prepare("INSERT INTO Trips 
-            (id, company_id, departure_city, destination_city, departure_time, arrival_time, price, capacity)
-            VALUES (:id, :company_id, :departure_city, :destination_city, :departure_time, :arrival_time, :price, :capacity)");
-
-        $id = uniqid('', true);
+    if (!$departure_city || !$destination_city || !$departure_time || !$arrival_time || !$price || !$capacity) {
+        $error = "Lütfen tüm alanları doldurun.";
+    } else {
+        $stmt = $db->prepare("INSERT INTO Trips (id, company_id, departure_city, destination_city, departure_time, arrival_time, price, capacity)
+                              VALUES (:id, :company_id, :dep, :dest, :dep_time, :arr_time, :price, :cap)");
         $stmt->execute([
-            ':id' => $id,
-            ':company_id' => $company_id,
-            ':departure_city' => $departure_city,
-            ':destination_city' => $destination_city,
-            ':departure_time' => $departure_time,
-            ':arrival_time' => $arrival_time,   
+            ':id' => uniqid(),
+            ':company_id' => $current_user['company_id'], // otomatik firma id
+            ':dep' => $departure_city,
+            ':dest' => $destination_city,
+            ':dep_time' => $departure_time,
+            ':arr_time' => $arrival_time,
             ':price' => $price,
-            ':capacity' => $capacity
+            ':cap' => $capacity
         ]);
-
-        $success = "Yeni sefer başarıyla eklendi!";
-    } catch (PDOException $e) {
-        $error = "Hata: " . htmlspecialchars($e->getMessage());
+        header("Location: trips_list.php?created=1");
+        exit;
     }
 }
 ?>
@@ -39,134 +74,118 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Yeni Sefer Oluştur</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yeni Sefer Ekle</title>
     <style>
         body {
             font-family: 'Segoe UI', sans-serif;
-            background-color: #f6f9fc;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
+            background-color: #f2f3f7;
+            margin: 0;
+            padding: 0;
         }
 
-        .form-container {
-            background: #fff;
-            padding: 30px 40px;
-            border-radius: 15px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            width: 400px;
+        header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 30px;
         }
 
         h2 {
             text-align: center;
-            color: #333;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
         }
 
         label {
             display: block;
-            color: #444;
-            margin-bottom: 6px;
-            font-weight: 500;
+            margin-bottom: 8px;
+            font-weight: 600;
         }
 
         input {
             width: 100%;
             padding: 10px;
             margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            transition: 0.2s;
-        }
-
-        input:focus {
-            border-color: #4a90e2;
-            outline: none;
-            box-shadow: 0 0 4px rgba(74,144,226,0.4);
+            border-radius: 6px;
+            border: 1px solid #ccc;
         }
 
         button {
             width: 100%;
-            background-color: #4a90e2;
+            background-color: #4CAF50;
             color: white;
-            padding: 12px;
             border: none;
+            padding: 12px;
+            font-size: 16px;
             border-radius: 8px;
             cursor: pointer;
-            font-size: 15px;
-            transition: 0.2s;
+            transition: 0.3s;
         }
 
         button:hover {
-            background-color: #357ABD;
-        }
-
-        .message {
-            text-align: center;
-            font-weight: bold;
-            margin-bottom: 15px;
-        }
-
-        .success {
-            color: #28a745;
+            background-color: #45a049;
         }
 
         .error {
-            color: #d9534f;
-        }
-
-        a {
-            display: block;
+            color: red;
             text-align: center;
-            margin-top: 15px;
-            color: #4a90e2;
-            text-decoration: none;
+            margin-bottom: 10px;
         }
 
-        a:hover {
-            text-decoration: underline;
+        .company-info {
+            text-align: center;
+            background-color: #e8f5e9;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-weight: 600;
         }
     </style>
 </head>
 <body>
+<header>
+    <h1>Yeni Sefer Oluştur</h1>
+</header>
 
-<div class="form-container">
-    <h2>Yeni Sefer Oluştur</h2>
+<div class="container">
+    <div class="company-info">
+        Firma: <?= htmlspecialchars($company['name']) ?>
+    </div>
 
-    <?php if (isset($success)): ?>
-        <p class="message success"><?php echo $success; ?></p>
-    <?php elseif (isset($error)): ?>
-        <p class="message error"><?php echo $error; ?></p>
+    <?php if (isset($error)): ?>
+        <div class="error"><?= $error ?></div>
     <?php endif; ?>
 
     <form method="POST">
-        <label>Firma ID</label>
-        <input type="text" name="company_id" required>
+        <label for="departure_city">Kalkış Şehri</label>
+        <input type="text" id="departure_city" name="departure_city" required>
 
-        <label>Kalkış Şehri</label>
-        <input type="text" name="departure_city" required>
+        <label for="destination_city">Varış Şehri</label>
+        <input type="text" id="destination_city" name="destination_city" required>
 
-        <label>Varış Şehri</label>
-        <input type="text" name="destination_city" required>
+        <label for="departure_time">Kalkış Zamanı</label>
+        <input type="datetime-local" id="departure_time" name="departure_time" required>
 
-        <label>Kalkış Zamanı</label>
-        <input type="datetime-local" name="departure_time" required>
+        <label for="arrival_time">Varış Zamanı</label>
+        <input type="datetime-local" id="arrival_time" name="arrival_time" required>
 
-        <label>Varış Zamanı</label>
-        <input type="datetime-local" name="arrival_time" required>
+        <label for="price">Bilet Fiyatı (₺)</label>
+        <input type="number" id="price" name="price" required min="0" step="0.01">
 
-        <label>Fiyat</label>
-        <input type="number" name="price" required>
+        <label for="capacity">Kapasite</label>
+        <input type="number" id="capacity" name="capacity" required min="1">
 
-        <label>Kapasite</label>
-        <input type="number" name="capacity" required>
-
-        <button type="submit">Seferi Oluştur</button>
+        <button type="submit">Seferi Kaydet</button>
     </form>
-
-    <a href="index.php">← Ana Sayfaya Dön</a>
 </div>
-
 </body>
 </html>
