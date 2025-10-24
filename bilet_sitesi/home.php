@@ -5,7 +5,7 @@ require_once 'includes/config.php'; // Veritabanı bağlantısı
 $trips = [];
 $message = "";
 
-// Form gönderildiyse filtreleme
+// 🔹 Sefer arama
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['search_trip'])) {
     $departure = $_POST['departure'];
     $arrival = $_POST['arrival'];
@@ -25,7 +25,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['search_trip'])) {
         $message = "Aradığınız kriterlere uygun sefer bulunamadı.";
     }
 } else {
-    // Form gönderilmemişse tüm seferleri göster
     $stmt = $db->query("SELECT t.*, b.name AS company_name 
                         FROM Trips t 
                         JOIN Bus_Company b ON t.company_id = b.id
@@ -33,12 +32,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['search_trip'])) {
     $trips = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Kullanıcı rolünü sessiona eklediyseniz kullanın
-if(isset($_SESSION['user_id']) && !isset($_SESSION['role'])) {
-    $stmt_role = $db->prepare("SELECT role FROM User WHERE id = :id");
+// 🔹 Rol kontrolü
+if (isset($_SESSION['user_id']) && !isset($_SESSION['role'])) {
+    $stmt_role = $db->prepare("SELECT role, full_name FROM User WHERE id = :id");
     $stmt_role->execute([':id' => $_SESSION['user_id']]);
-    $user_role = $stmt_role->fetchColumn();
-    $_SESSION['role'] = $user_role;
+    $user = $stmt_role->fetch(PDO::FETCH_ASSOC);
+
+    $_SESSION['role'] = $user['role'];
+    $_SESSION['full_name'] = $user['full_name'];
 }
 ?>
 
@@ -59,24 +60,59 @@ if(isset($_SESSION['user_id']) && !isset($_SESSION['role'])) {
         th, td { border: 1px solid #ddd; padding: 12px; text-align: center; }
         th { background-color: #f2f2f2; }
         .message { color: red; margin-top: 20px; text-align: center; }
-        .logout { position: absolute; top: 15px; right: 15px; }
+        .logout { position: absolute; top: 15px; right: 15px; color: white; }
         .btn-link { text-decoration: none; color: #4CAF50; font-weight: bold; }
         .btn-link:hover { text-decoration: underline; }
+        .nav-buttons { text-align: center; margin: 20px 0; }
+        .nav-buttons a {
+            display: inline-block;
+            margin: 8px;
+            padding: 10px 20px;
+            background-color: #2196F3;
+            color: white;
+            border-radius: 5px;
+            text-decoration: none;
+            transition: 0.2s;
+        }
+        .nav-buttons a:hover { background-color: #0b7dda; }
     </style>
 </head>
 <body>
 
 <header>
     <h1>Otobüs Bilet Platformu</h1>
-    <?php if(isset($_SESSION['user_id'])): ?>
+    <?php if (isset($_SESSION['user_id'])): ?>
         <span>Hoş geldin, <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</span>
-        <a class="logout" href="logout.php" style="color:white;">Çıkış yap</a>
+        <a class="logout" href="logout.php">Çıkış yap</a>
     <?php else: ?>
-        <a class="logout" href="login.php" style="color:white;">Giriş Yap / Kayıt Ol</a>
+        <a class="logout" href="login.php">Giriş Yap / Kayıt Ol</a>
     <?php endif; ?>
 </header>
 
 <div class="container">
+    <!-- 🔹 Navigasyon butonları -->
+    <div class="nav-buttons">
+        <a href="login.php">Giriş / Kayıt</a>
+        <a href="logout.php">Çıkış</a>
+
+        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'user'): ?>
+            <a href="my_tickets.php">Biletlerim</a>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'company'): ?>
+            <a href="trips_list.php">Sefer Listesi</a>
+            <a href="create_coupon.php">Kupon Olusturma</a>
+            <a href="coupons_list.php">Kupon Listesi</a>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
+            <a href="add_company.php">Şirket Ekle</a>
+            <a href="manage_roles.php">Rol Yönetimi</a>
+            <a href="create_coupon.php">Kupon Olusturma</a>
+            <a href="coupons_list.php">Kupon Listesi</a>
+        <?php endif; ?>
+    </div>
+
     <h2>Sefer Ara</h2>
     <form method="POST">
         <input type="text" name="departure" placeholder="Kalkış Şehri" required>
@@ -84,11 +120,11 @@ if(isset($_SESSION['user_id']) && !isset($_SESSION['role'])) {
         <button type="submit" name="search_trip">Ara</button>
     </form>
 
-    <?php if($message): ?>
+    <?php if ($message): ?>
         <div class="message"><?php echo $message; ?></div>
     <?php endif; ?>
 
-    <?php if($trips): ?>
+    <?php if ($trips): ?>
         <table>
             <tr>
                 <th>Firma</th>
@@ -99,17 +135,17 @@ if(isset($_SESSION['user_id']) && !isset($_SESSION['role'])) {
                 <th>Fiyat</th>
                 <th>İşlem</th>
             </tr>
-            <?php foreach($trips as $trip): ?>
+            <?php foreach ($trips as $trip): ?>
                 <tr>
-                    <td><?php echo htmlspecialchars($trip['company_name']); ?></td>
-                    <td><?php echo htmlspecialchars($trip['departure_city']); ?></td>
-                    <td><?php echo htmlspecialchars($trip['destination_city']); ?></td>
-                    <td><?php echo date('d-m-Y', strtotime($trip['departure_time'])); ?></td>
-                    <td><?php echo date('H:i', strtotime($trip['departure_time'])); ?></td>
-                    <td><?php echo $trip['price']; ?> ₺</td>
+                    <td><?= htmlspecialchars($trip['company_name']); ?></td>
+                    <td><?= htmlspecialchars($trip['departure_city']); ?></td>
+                    <td><?= htmlspecialchars($trip['destination_city']); ?></td>
+                    <td><?= date('d-m-Y', strtotime($trip['departure_time'])); ?></td>
+                    <td><?= date('H:i', strtotime($trip['departure_time'])); ?></td>
+                    <td><?= $trip['price']; ?> ₺</td>
                     <td>
-                        <?php if(isset($_SESSION['user_id']) && $_SESSION['role'] === 'user'): ?>
-                            <a class="btn-link" href="buy_ticket.php?trip_id=<?php echo $trip['id']; ?>">Bilet Al</a>
+                        <?php if (isset($_SESSION['user_id']) && $_SESSION['role'] === 'user'): ?>
+                            <a class="btn-link" href="buy_ticket.php?trip_id=<?= $trip['id']; ?>">Bilet Al</a>
                         <?php else: ?>
                             <a class="btn-link" href="login.php">Giriş Yap</a>
                         <?php endif; ?>

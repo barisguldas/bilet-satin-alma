@@ -18,10 +18,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_role'])) {
     $new_role = $_POST['new_role'];
     $company_id = !empty($_POST['company_id']) ? $_POST['company_id'] : null;
 
-    // Firma yetkilisi olacaksa company_id zorunlu
-    if ($new_role === 'company' && !$company_id) {
+    // Kullanıcıyı çek
+    $stmt = $db->prepare("SELECT * FROM User WHERE id = :id");
+    $stmt->execute([':id' => $user_id]);
+    $target_user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$target_user) {
+        $error = "Kullanıcı bulunamadı.";
+    }
+    // Admin kullanıcıların rolü değiştirilemez
+    elseif ($target_user['role'] === 'admin') {
+        $error = "Admin kullanıcıların rolü değiştirilemez!";
+    }
+    // Firma yetkilisi olacaksa firma seçimi zorunlu
+    elseif ($new_role === 'company' && !$company_id) {
         $error = "Firma yetkilisi atamak için bir firma seçmelisiniz!";
-    } else {
+    }
+    // Normal kullanıcıya firma atanamaz
+    elseif ($new_role === 'user' && $company_id) {
+        $error = "Normal kullanıcılara firma atanamaz!";
+    }
+    else {
         $stmt = $db->prepare("UPDATE User SET role = :role, company_id = :company_id WHERE id = :id");
         $stmt->execute([
             ':role' => $new_role,
@@ -45,67 +62,92 @@ $companies = $db->query("SELECT * FROM Bus_Company ORDER BY name ASC")->fetchAll
     <title>Rol Yönetimi - Admin Paneli</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f6f9;
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background: #eef1f5;
             margin: 0;
+            padding: 0;
         }
+
         header {
-            background-color: #4CAF50;
-            color: white;
-            padding: 15px;
+            background: #1d3557;
+            color: #fff;
+            padding: 20px 0;
             text-align: center;
+            font-size: 24px;
+            letter-spacing: 1px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
         }
+
         .container {
             max-width: 1000px;
-            background: white;
             margin: 40px auto;
-            padding: 20px;
-            border-radius: 10px;
+            background: #fff;
+            border-radius: 12px;
+            padding: 30px;
             box-shadow: 0 3px 10px rgba(0,0,0,0.1);
         }
+
         h2 {
             text-align: center;
             margin-bottom: 25px;
+            color: #1d3557;
         }
+
         table {
             width: 100%;
             border-collapse: collapse;
             margin-bottom: 25px;
         }
+
         th, td {
             border: 1px solid #ddd;
-            text-align: center;
             padding: 12px;
+            text-align: center;
         }
+
         th {
-            background-color: #f2f2f2;
+            background-color: #f1f1f1;
+            color: #333;
         }
+
+        tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
         select, button {
             padding: 6px 10px;
             border-radius: 5px;
             border: 1px solid #ccc;
+            font-size: 14px;
         }
+
         button {
-            background-color: #4CAF50;
+            background-color: #457b9d;
             color: white;
             cursor: pointer;
+            border: none;
+            transition: 0.2s;
         }
+
         button:hover {
-            background-color: #45a049;
+            background-color: #1d3557;
         }
+
         .alert {
             text-align: center;
             padding: 10px;
             border-radius: 5px;
             margin-bottom: 15px;
+            font-weight: bold;
         }
-        .success { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
+
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     </style>
 </head>
 <body>
 <header>
-    <h1>Admin Paneli - Rol Yönetimi</h1>
+    Admin Paneli - Rol Yönetimi
 </header>
 
 <div class="container">
@@ -124,7 +166,7 @@ $companies = $db->query("SELECT * FROM Bus_Company ORDER BY name ASC")->fetchAll
             <th>Şu Anki Rol</th>
             <th>Firma</th>
             <th>Yeni Rol</th>
-            <th>Atanacak Firma (Opsiyonel)</th>
+            <th>Atanacak Firma</th>
             <th>İşlem</th>
         </tr>
 
@@ -139,33 +181,43 @@ $companies = $db->query("SELECT * FROM Bus_Company ORDER BY name ASC")->fetchAll
                         if ($user['company_id']) {
                             $stmt = $db->prepare("SELECT name FROM Bus_Company WHERE id = :id");
                             $stmt->execute([':id' => $user['company_id']]);
-                            $company = $stmt->fetchColumn();
-                            echo htmlspecialchars($company ?: '-');
+                            echo htmlspecialchars($stmt->fetchColumn() ?: '-');
                         } else {
                             echo '-';
                         }
                         ?>
                     </td>
                     <td>
-                        <select name="new_role">
-                            <option value="user" <?= $user['role'] === 'user' ? 'selected' : '' ?>>User</option>
-                            <option value="company" <?= $user['role'] === 'company' ? 'selected' : '' ?>>Firma Yetkilisi</option>
-                            <option value="admin" <?= $user['role'] === 'admin' ? 'selected' : '' ?>>Admin</option>
-                        </select>
+                        <?php if ($user['role'] === 'admin'): ?>
+                            <strong>Admin</strong>
+                        <?php else: ?>
+                            <select name="new_role">
+                                <option value="user" <?= $user['role'] === 'user' ? 'selected' : '' ?>>User</option>
+                                <option value="company" <?= $user['role'] === 'company' ? 'selected' : '' ?>>Firma Yetkilisi</option>
+                            </select>
+                        <?php endif; ?>
                     </td>
                     <td>
-                        <select name="company_id">
-                            <option value="">Seçim Yok</option>
-                            <?php foreach ($companies as $c): ?>
-                                <option value="<?= $c['id'] ?>" <?= $user['company_id'] === $c['id'] ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($c['name']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                        <?php if ($user['role'] === 'admin'): ?>
+                            -
+                        <?php else: ?>
+                            <select name="company_id">
+                                <option value="">Seçim Yok</option>
+                                <?php foreach ($companies as $c): ?>
+                                    <option value="<?= $c['id'] ?>" <?= $user['company_id'] == $c['id'] ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($c['name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php endif; ?>
                     </td>
                     <td>
-                        <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                        <button type="submit" name="update_role">Güncelle</button>
+                        <?php if ($user['role'] !== 'admin'): ?>
+                            <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                            <button type="submit" name="update_role">Güncelle</button>
+                        <?php else: ?>
+                            -
+                        <?php endif; ?>
                     </td>
                 </form>
             </tr>

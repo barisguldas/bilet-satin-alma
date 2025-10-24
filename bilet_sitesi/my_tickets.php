@@ -2,86 +2,44 @@
 session_start();
 require_once 'includes/config.php';
 
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// 🔒 Giriş kontrolü
 if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
+    header("Location: login.php");
     exit;
 }
 
-// Kullanıcıyı çek
-$stmt = $db->prepare("SELECT * FROM User WHERE id = :id");
+// 🧍 Kullanıcı bilgisi
+$stmt = $db->prepare("SELECT full_name, balance FROM User WHERE id = :id");
 $stmt->execute([':id' => $_SESSION['user_id']]);
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$user) die("Kullanıcı bulunamadı.");
 
-if (!$user) {
-    die("Kullanıcı bulunamadı.");
-}
-
-// 🎯 Bilet iptal işlemi
-if (isset($_GET['cancel_ticket'])) {
-    $ticket_id = $_GET['cancel_ticket'];
-
-    // Bilet bilgilerini çek
-    $stmt = $db->prepare("
-        SELECT t.id, t.total_price, tr.departure_time 
-        FROM Tickets t
-        JOIN Trips tr ON t.trip_id = tr.id
-        WHERE t.id = :tid AND t.user_id = :uid
-    ");
-    $stmt->execute([
-        ':tid' => $ticket_id,
-        ':uid' => $user['id']
-    ]);
-    $ticket = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if ($ticket) {
-        $departure_time = strtotime($ticket['departure_time']);
-        $current_time = time();
-
-        // 🚫 Eğer yolculuğa 1 saatten az kalmışsa iptal yasak
-        if ($departure_time - $current_time < 3600) {
-            $error_message = "Yolculuğa 1 saatten az kaldığı için bu bileti iptal edemezsiniz.";
-        } else {
-            // 💰 İade işlemi: bilet fiyatı kullanıcıya geri yüklenir
-            $db->beginTransaction();
-
-            try {
-                // Kullanıcının bakiyesini güncelle
-                $updateBalance = $db->prepare("UPDATE User SET balance = balance + :amount WHERE id = :uid");
-                $updateBalance->execute([
-                    ':amount' => $ticket['total_price'],
-                    ':uid' => $user['id']
-                ]);
-
-                // Bilet ve koltuk kaydını sil
-                $deleteSeats = $db->prepare("DELETE FROM Booked_Seats WHERE ticket_id = :tid");
-                $deleteSeats->execute([':tid' => $ticket_id]);
-
-                $deleteTicket = $db->prepare("DELETE FROM Tickets WHERE id = :tid");
-                $deleteTicket->execute([':tid' => $ticket_id]);
-
-                $db->commit();
-
-                header("Location: my_tickets.php?cancelled=1");
-                exit;
-            } catch (Exception $e) {
-                $db->rollBack();
-                $error_message = "Bilet iptali sırasında bir hata oluştu: " . $e->getMessage();
-            }
-        }
-    }
-}
-
-// Kullanıcının biletlerini çek
+// 🎟️ Kullanıcının biletleri
 $stmt = $db->prepare("
-    SELECT t.id AS ticket_id, t.total_price, tr.departure_city, tr.destination_city,
-           tr.departure_time, tr.arrival_time, b.name AS company_name
+    SELECT 
+        t.id AS ticket_id,
+        t.total_price,
+        t.status,
+        t.created_at,
+        tr.departure_city,
+        tr.destination_city,
+        tr.departure_time,
+        tr.arrival_time,
+        tr.price,
+        bc.name AS company_name,
+        GROUP_CONCAT(bs.seat_number, ', ') AS seats
     FROM Tickets t
     JOIN Trips tr ON t.trip_id = tr.id
-    JOIN Bus_Company b ON tr.company_id = b.id
-    WHERE t.user_id = :uid
-    ORDER BY tr.departure_time DESC
+    JOIN Bus_Company bc ON tr.company_id = bc.id
+    LEFT JOIN Booked_Seats bs ON t.id = bs.ticket_id
+    WHERE t.user_id = :user_id
+    GROUP BY t.id
+    ORDER BY t.created_at DESC
 ");
-$stmt->execute([':uid' => $user['id']]);
+$stmt->execute([':user_id' => $_SESSION['user_id']]);
 $tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
@@ -93,75 +51,110 @@ $tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <title>Biletlerim</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background-color: #eef2f7;
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #f2f3f7;
             margin: 0;
             padding: 0;
         }
+
         header {
-            background-color: #4CAF50;
+            background-color: #1976d2;
             color: white;
-            padding: 15px;
             text-align: center;
+            padding: 15px;
         }
+
         .container {
             max-width: 900px;
             margin: 40px auto;
             background: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 30px;
         }
+
         h2 {
             text-align: center;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
+
+        .ticket {
+            background-color: #f9f9f9;
+            border-radius: 10px;
+            padding: 15px 20px;
+            margin-bottom: 15px;
+            border-left: 5px solid #1976d2;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+        }
+
+        .ticket strong {
+            color: #1976d2;
+        }
+
+        .ticket small {
+            color: #555;
+        }
+
+        .no-ticket {
+            text-align: center;
+            font-size: 1.1em;
+            color: #666;
+            margin-top: 30px;
+        }
+
         .balance {
             text-align: right;
-            margin-bottom: 20px;
-            font-weight: bold;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            color: #444;
         }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 12px;
+
+        .back-link {
+            display: block;
             text-align: center;
-        }
-        th {
-            background-color: #f8f8f8;
-        }
-        tr:hover {
-            background-color: #f1f1f1;
-        }
-        .cancel-btn {
-            background-color: #f44336;
-            color: white;
-            padding: 8px 12px;
-            border-radius: 6px;
+            margin-top: 25px;
             text-decoration: none;
+            color: #1976d2;
         }
-        .cancel-btn:hover {
-            background-color: #d32f2f;
+
+        .back-link:hover {
+            text-decoration: underline;
         }
-        .alert {
+
+        .success {
             background-color: #d4edda;
             color: #155724;
             padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 15px;
+            border-radius: 6px;
             text-align: center;
+            margin-bottom: 20px;
         }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            text-align: center;
+
+        .ticket-actions {
+            margin-top: 10px;
+        }
+
+        .ticket-actions a {
+            display: inline-block;
+            margin-right: 10px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            text-decoration: none;
+            color: white;
+        }
+
+        .btn-pdf {
+            background-color: #1976d2;
+        }
+
+        .btn-cancel {
+            background-color: #d32f2f;
+        }
+
+        .btn-disabled {
+            background-color: #aaa;
+            cursor: not-allowed;
         }
     </style>
 </head>
@@ -171,49 +164,52 @@ $tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </header>
 
 <div class="container">
-    <?php if (isset($_GET['cancelled'])): ?>
-        <div class="alert">Bilet başarıyla iptal edildi ve ücret bakiyenize eklendi.</div>
-    <?php elseif (isset($error_message)): ?>
-        <div class="error"><?= htmlspecialchars($error_message) ?></div>
+    <?php if (isset($_GET['success'])): ?>
+        <div class="success">✅ Bilet başarıyla satın alındı!</div>
+    <?php elseif (isset($_GET['canceled'])): ?>
+        <div class="success">❌ Bilet başarıyla iptal edildi, ücret hesabınıza iade edildi.</div>
     <?php endif; ?>
 
-    <div class="balance">Bakiyeniz: <?= $user['balance'] ?> ₺</div>
+    <div class="balance">
+        💰 Mevcut Bakiye: <strong><?= htmlspecialchars($user['balance']) ?> ₺</strong>
+    </div>
 
     <h2>Satın Aldığınız Biletler</h2>
 
-    <table>
-        <tr>
-            <th>Firma</th>
-            <th>Kalkış</th>
-            <th>Varış</th>
-            <th>Kalkış Zamanı</th>
-            <th>Varış Zamanı</th>
-            <th>Fiyat</th>
-            <th>İşlem</th>
-        </tr>
-        <?php if (count($tickets) > 0): ?>
-            <?php foreach ($tickets as $ticket): ?>
-                <tr>
-                    <td><?= htmlspecialchars($ticket['company_name']) ?></td>
-                    <td><?= htmlspecialchars($ticket['departure_city']) ?></td>
-                    <td><?= htmlspecialchars($ticket['destination_city']) ?></td>
-                    <td><?= date('d-m-Y H:i', strtotime($ticket['departure_time'])) ?></td>
-                    <td><?= date('d-m-Y H:i', strtotime($ticket['arrival_time'])) ?></td>
-                    <td><?= htmlspecialchars($ticket['total_price']) ?> ₺</td>
-                    <td>
-                        <?php if (strtotime($ticket['departure_time']) - time() >= 3600): ?>
-                            <a href="?cancel_ticket=<?= $ticket['ticket_id'] ?>" class="cancel-btn" onclick="return confirm('Bu bileti iptal etmek istediğinize emin misiniz?')">İptal Et</a>
-                        <?php else: ?>
-                            <span style="color: gray;">İptal Edilemez</span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        <?php else: ?>
-            <tr><td colspan="7">Henüz satın aldığınız bilet bulunmuyor.</td></tr>
-        <?php endif; ?>
-    </table>
-</div>
+    <?php if (count($tickets) > 0): ?>
+        <?php foreach ($tickets as $ticket): ?>
+            <?php
+                $departure_time = strtotime($ticket['departure_time']);
+                $now = time();
+                $time_diff = $departure_time - $now;
+                $can_cancel = ($time_diff > 3600) && $ticket['status'] === 'active';
+            ?>
+            <div class="ticket">
+                <strong><?= htmlspecialchars($ticket['company_name']) ?></strong><br>
+                <?= htmlspecialchars($ticket['departure_city']) ?> → <?= htmlspecialchars($ticket['destination_city']) ?><br>
+                 Kalkış: <?= date('d-m-Y H:i', $departure_time) ?><br>
+                 Varış: <?= date('d-m-Y H:i', strtotime($ticket['arrival_time'])) ?><br>
+                 Koltuk(lar): <?= htmlspecialchars($ticket['seats'] ?? '-') ?><br>
+                 Ödenen Tutar: <?= htmlspecialchars($ticket['total_price']) ?> ₺<br>
+                 Satın Alım: <?= date('d-m-Y H:i', strtotime($ticket['created_at'])) ?><br>
+                 Durum: <?= htmlspecialchars($ticket['status']) ?>
 
+                <div class="ticket-actions">
+                    <a href="ticket_pdf.php?id=<?= urlencode($ticket['ticket_id']) ?>" class="btn-pdf">📄 PDF Görüntüle</a>
+
+                    <?php if ($can_cancel): ?>
+                        <a href="cancel_ticket.php?id=<?= urlencode($ticket['ticket_id']) ?>" class="btn-cancel" onclick="return confirm('Bu bileti iptal etmek istediğinize emin misiniz?')">❌ Bileti İptal Et</a>
+                    <?php else: ?>
+                        <a class="btn-cancel btn-disabled">⏰ İptal Edilemez</a>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    <?php else: ?>
+        <div class="no-ticket">Henüz bir bilet satın almadınız.</div>
+    <?php endif; ?>
+
+    <a href="home.php" class="back-link">← Ana Sayfaya Dön</a>
+</div>
 </body>
 </html>
