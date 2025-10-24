@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: php_app
+    ports:
+      - "8080:80"
+    volumes:
+      - ./app:/var/www/html
+    restart: unless-stopped
